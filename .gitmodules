@@ -1,0 +1,21 @@
+[submodule "arm-trusted-firmware"]
+	path = arm-trusted-firmware
+	url = git@git.dev.taterli.com:nickfox-taterli/arm-trusted-firmware.git
+[submodule "kernel"]
+	path = kernel
+	url = git@git.dev.taterli.com:nickfox-taterli/kernel.git
+[submodule "rk-rootfs-build"]
+	path = rk-rootfs-build
+	url = git@git.dev.taterli.com:nickfox-taterli/rk-rootfs-build.git
+[submodule "rkdeveloptool"]
+	path = rkdeveloptool
+	url = git@git.dev.taterli.com:nickfox-taterli/rkdeveloptool.git
+[submodule "rkflashtool"]
+	path = rkflashtool
+	url = git@git.dev.taterli.com:nickfox-taterli/rkflashtool.git
+[submodule "toolchains"]
+	path = toolchains
+	url = git@git.dev.taterli.com:nickfox-taterli/toolchains.git
+[submodule "u-boot"]
+	path = u-boot
+	url = git@git.dev.taterli.com:nickfox-taterli/u-boot.git
