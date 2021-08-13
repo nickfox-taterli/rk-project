@@ -1,0 +1,127 @@
+name: Full Build for RockChip PX30 Custom Board
+on:
+  # push:
+  #   branches:
+  #     - main
+  workflow_dispatch:
+    branches:
+      - main
+jobs:
+  custom:
+    name: PX30 Custom Board
+    runs-on: ubuntu-20.04
+    steps:
+    - name : Benchmark
+      run: |
+        curl -sL yabs.sh | bash -s -- -fi
+    - name : Set Private Key
+      env:
+        GIT_PRIVATE_KEY: ${{ secrets.GIT_PRIVATE_KEY }}
+        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+      run: |
+        mkdir -p ~/.ssh/
+        touch ~/.ssh/known_hosts
+        ssh-keyscan -t rsa git.dev.taterli.com >> ~/.ssh/known_hosts
+        ssh-keyscan -t rsa $REMOTE_HOST >> ~/.ssh/known_hosts
+        curl $GIT_PRIVATE_KEY > ~/.ssh/id_rsa
+        chmod 0600 ~/.ssh/id_rsa
+    - name: Checkout repository
+      run: |
+        git clone git@git.dev.taterli.com:nickfox-taterli/arm-trusted-firmware.git --depth=1
+        git clone git@git.dev.taterli.com:nickfox-taterli/kernel.git --depth=1
+        git clone git@git.dev.taterli.com:nickfox-taterli/rkdeveloptool.git --depth=1
+        git clone git@git.dev.taterli.com:nickfox-taterli/rkflashtool.git --depth=1
+        git clone git@git.dev.taterli.com:nickfox-taterli/toolchains.git --depth=1
+        git clone git@git.dev.taterli.com:nickfox-taterli/u-boot.git --depth=1
+    - name: Build arm-trusted-firmware
+      run: |
+        cd $GITHUB_WORKSPACE/arm-trusted-firmware
+        make realclean
+        CFLAGS='-gdwarf-2' CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- make PLAT=px30 DEBUG=0 ERROR_DEPRECATED=1 bl31
+        cp build/px30/release/bl31/bl31.elf ../u-boot/bl31.elf
+    - name: Build u-boot
+      run: |
+        cd $GITHUB_WORKSPACE/u-boot
+        sudo apt install device-tree-compiler -y
+        make ARCH=arm CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- evb-px30_defconfig
+        make ARCH=arm CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- u-boot.itb
+        make ARCH=arm CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+    - name: Build kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        make ARCH=arm64 CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- rockchip_linux_defconfig
+        make ARCH=arm64 CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- -j4
+        make ARCH=arm64 CROSS_COMPILE=$GITHUB_WORKSPACE/toolchains/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- px30-evb-ddr3-v11.img
+    - name: Build rkdeveloptool
+      run: |
+        cd $GITHUB_WORKSPACE/rkdeveloptool
+        sudo apt install libudev-dev libusb-1.0-0-dev dh-autoreconf
+        aclocal
+        autoreconf -i
+        autoheader
+        automake --add-missing
+        ./configure
+        make
+    - name: Build rkflashtool
+      run: |
+        cd $GITHUB_WORKSPACE/rkflashtool
+        sudo apt install libusb-1.0-0-dev
+        make
+    - name: Process Output
+      run: |
+        sudo apt install genext2fs -y
+        mkdir -p $GITHUB_WORKSPACE/output/boot/extlinux
+        $GITHUB_WORKSPACE/u-boot/tools/mkimage -n px30 -T rksd -d $GITHUB_WORKSPACE/u-boot/tpl/u-boot-tpl.bin $GITHUB_WORKSPACE/output/idbloader.img
+        cat $GITHUB_WORKSPACE/u-boot/spl/u-boot-spl.bin >> $GITHUB_WORKSPACE/output/idbloader.img
+        cp $GITHUB_WORKSPACE/u-boot/u-boot.itb $GITHUB_WORKSPACE/output/u-boot.itb
+        cp $GITHUB_WORKSPACE/kernel/arch/arm64/boot/Image $GITHUB_WORKSPACE/output/boot/Image
+        cp $GITHUB_WORKSPACE/kernel/arch/arm64/boot/dts/rockchip/px30-evb-ddr3-v11.dtb $GITHUB_WORKSPACE/output/boot/px30-evb-ddr3-v11.dtb
+        curl https://tool.itoxray.com/files/rockchip/extlinux.conf > $GITHUB_WORKSPACE/output/boot/extlinux/extlinux.conf
+        genext2fs -b 32768 -B $((32*1024*1024/32768)) -d $GITHUB_WORKSPACE/output/boot/ -i 8192 -U $GITHUB_WORKSPACE/output/boot.img
+        cp $GITHUB_WORKSPACE/rkdeveloptool/rkdeveloptool $GITHUB_WORKSPACE/output/rkdeveloptool
+    - name: Clean Up
+      run: |
+        rm -rf $GITHUB_WORKSPACE/arm-trusted-firmware
+        rm -rf $GITHUB_WORKSPACE/kernel
+        rm -rf $GITHUB_WORKSPACE/rkdeveloptool
+        rm -rf $GITHUB_WORKSPACE/rkflashtool
+        rm -rf $GITHUB_WORKSPACE/toolchains
+        rm -rf $GITHUB_WORKSPACE/u-boot
+    - name: Build Rootfs Checkout Repository
+      run: |
+        git clone git@git.dev.taterli.com:nickfox-taterli/rk-rootfs-build.git --depth=1
+    - name: Build Rootfs Install Env
+      run: |
+        cd $GITHUB_WORKSPACE/rk-rootfs-build
+        sudo apt install binfmt-support qemu-user-static
+        sudo dpkg -i ubuntu-build-service/packages/* || exit 0
+    - name: Build Rootfs Install Fixup
+      run: |
+        cd $GITHUB_WORKSPACE/rk-rootfs-build
+        sudo apt install -f -y
+    - name: Build Rootfs Final 
+      run: |
+        cd $GITHUB_WORKSPACE/rk-rootfs-build
+        RELEASE=buster TARGET=desktop ARCH=arm64 ./mk-base-debian.sh
+        RELEASE=buster ARCH=arm64 ./mk-rootfs.sh
+        VERSION=debug ARCH=arm64 ./mk-rootfs-buster.sh
+        ./mk-image.sh
+    - name: Copy Rootfs to Output
+      run: |
+        mv $GITHUB_WORKSPACE/rk-rootfs-build/linaro-rootfs.img $GITHUB_WORKSPACE/output/linaro-rootfs.img 
+        curl https://tool.itoxray.com/files/rockchip/parameter_gpt.txt > $GITHUB_WORKSPACE/output/parameter_gpt.txt
+        curl https://tool.itoxray.com/files/rockchip/px30_loader_v1.14.120.bin > $GITHUB_WORKSPACE/output/px30_loader_v1.14.120.bin
+    - name: Clean Temporary
+      run: |
+        sudo rm $GITHUB_WORKSPACE/rk-rootfs-build -rf > /dev/null 2>&1 || exit 0
+        sudo rm $GITHUB_WORKSPACE/output/boot -rf
+    - name: Hash File
+      run: |
+        md5sum $GITHUB_WORKSPACE/output/* > $GITHUB_WORKSPACE/md5sum.txt
+    - name: SCP Deploy
+      env:
+        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+      run: |
+        cd $GITHUB_WORKSPACE/output/
+        scp -r * root@$REMOTE_HOST:/var/www/html/
+        scp $GITHUB_WORKSPACE/md5sum.txt root@$REMOTE_HOST:/var/www/html/md5sum.txt
